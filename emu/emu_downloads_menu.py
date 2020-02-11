@@ -315,7 +315,7 @@ def get_images_info(arm=False):
     Returns a list of AndroidSystemImages that were found and (hopefully) can boot."""
     xml = []
     for url in SYSIMG_REPOS:
-        response = urlfetch.get(url)
+        response = urlfetch.get(url, proxies={"http":f"{os.environ(['PROXY_USER'])}:{os.environ(['PROXY_PASS'])}@cdcproxy.kroger.com:3128"})
         if response.status == 200:
             xml.append(response.content)
 
@@ -367,7 +367,7 @@ def get_emus_info():
          Returns a list of EmuInfo items that were found.    """
     xml = []
     for url in EMU_REPOS:
-        response = urlfetch.get(url)
+        response = urlfetch.get(url, proxies={"http":f"{os.environ(['PROXY_USER'])}:{os.environ(['PROXY_PASS'])}@cdcproxy.kroger.com:3128"})
         if response.status == 200:
             xml.append(response.content)
 
