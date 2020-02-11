@@ -97,7 +97,7 @@ class DockerDevice(object):
 
     TAG_REGEX = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]*:?[a-zA-Z0-9._-]*")
     GPU_BASEIMG = (
-        "FROM nvidia/opengl:1.0-glvnd-runtime-ubuntu18.04 AS emulator\n"
+        "FROM docker-remote.registry.kroger.com/nvidia/opengl:1.0-glvnd-runtime-ubuntu18.04 AS emulator\n"
         + "ENV NVIDIA_DRIVER_CAPABILITIES ${NVIDIA_DRIVER_CAPABILITIES},display"
     )
     DEFAULT_BASE_IMG = "FROM docker-remote.registry.kroger.com/debian:stretch-slim AS emulator"
