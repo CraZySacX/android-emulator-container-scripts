@@ -316,6 +316,7 @@ def get_images_info(arm=False):
     xml = []
     for url in SYSIMG_REPOS:
         response = urlfetch.get(url, trust_env=True)
+        print(response)
         if response.status == 200:
             xml.append(response.content)
 
