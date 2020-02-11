@@ -317,7 +317,7 @@ def get_images_info(arm=False):
     for url in SYSIMG_REPOS:
         response = requests.get(url)
         print(response)
-        if response.status == 200:
+        if response.status_code == 200:
             xml.append(response.content)
 
     licenses = [License(p) for x in xml for p in ET.fromstring(x).findall("license")]
