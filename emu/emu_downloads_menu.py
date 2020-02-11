@@ -73,7 +73,7 @@ def _download(url, dest):
     if os.path.exists(dest):
         print("  Skipping already downloaded file: {}".format(dest))
         return dest
-    with urlfetch.get(url, proxies={"http":f"{os.environ("PROXY_USER")}:{os.environ("PROXY_PASS")}@cdcproxy.kroger.com:3128"}) as r:
+    with urlfetch.get(url, proxies={"http":f"{os.environ(["PROXY_USER"])}:{os.environ(["PROXY_PASS"])}@cdcproxy.kroger.com:3128"}) as r:
         with tqdm(r, total=int(r.headers["content-length"]), unit="B", unit_scale=True) as t:
             with open(dest, "wb") as f:
                 for data in r:
