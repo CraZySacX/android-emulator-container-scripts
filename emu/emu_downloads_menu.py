@@ -368,8 +368,8 @@ def get_emus_info():
          Returns a list of EmuInfo items that were found.    """
     xml = []
     for url in EMU_REPOS:
-        response = reqeusts.get(url)
-        if response.status == 200:
+        response = requests.get(url)
+        if response.status_code == 200:
             xml.append(response.content)
 
     licenses = [License(p) for x in xml for p in ET.fromstring(x).findall("license")]
