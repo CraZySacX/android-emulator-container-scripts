@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 import click
-import urlfetch
+import requests
 from consolemenu import SelectionMenu
 from tqdm import tqdm
 
@@ -73,7 +73,7 @@ def _download(url, dest):
     if os.path.exists(dest):
         print("  Skipping already downloaded file: {}".format(dest))
         return dest
-    with urlfetch.get(url, trust_env=True) as r:
+    with requests.get(url) as r:
         with tqdm(r, total=int(r.headers["content-length"]), unit="B", unit_scale=True) as t:
             with open(dest, "wb") as f:
                 for data in r:
@@ -315,7 +315,7 @@ def get_images_info(arm=False):
     Returns a list of AndroidSystemImages that were found and (hopefully) can boot."""
     xml = []
     for url in SYSIMG_REPOS:
-        response = urlfetch.get(url, trust_env=True)
+        response = requests.get(url)
         print(response)
         if response.status == 200:
             xml.append(response.content)
@@ -368,7 +368,7 @@ def get_emus_info():
          Returns a list of EmuInfo items that were found.    """
     xml = []
     for url in EMU_REPOS:
-        response = urlfetch.get(url, trust_env=True)
+        response = reqeusts.get(url)
         if response.status == 200:
             xml.append(response.content)
 
