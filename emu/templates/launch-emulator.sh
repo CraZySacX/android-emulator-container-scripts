@@ -133,5 +133,6 @@ exec emulator/emulator @Pixel2 -no-audio -verbose -wipe-data \
   -logcat-output /tmp/android-unknown/logcat.log \
   -feature  AllowSnapshotMigration \
   -gpu swiftshader_indirect \
+  -partition-size 2048 \
   {{extra}} ${EMULATOR_PARAMS} -qemu -append panic=1
 # All done!
