@@ -11,12 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import sys
+"""This script prefixes the /* eslint-disable */ to the given file.
 
-# This launcher will force the emulator to use hardware acceleration. In order to use this you will need to have
-# installed the nvida docker container drivers (https://github.com/NVIDIA/nvidia-docker)
-CONTAINER_ID=$1
-shift
-PARAMS="$@"
-# Allow display access from the container.
-xhost +si:localuser:root
-docker run --gpus all -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix  -e "TOKEN=$(cat ~/.emulator_console_auth_token)" -e "ADBKEY=$(cat ~/.android/adbkey)" -e "EMULATOR_PARAMS=-gpu host ${PARAMS}" --device /dev/kvm --publish 8554:8554/tcp --publish 5555:5555/tcp ${CONTAINER_ID}
+   For example:
+
+   python eslint_prefix.py foo.js
+
+   Will prefix /* eslint-disable */ to the file foo.js.
+"""
+
+def main(argv):
+    prefix = '/* eslint-disable */'
+    fname = argv[1]
+    text = ''
+    with open(fname, 'r') as fn:
+        text = fn.read()
+
+    with open(fname, 'w') as fn:
+        fn.write(prefix)
+        fn.write('\n')
+        fn.write(text)
+
+if __name__ == '__main__':
+    main(sys.argv)

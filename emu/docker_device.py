@@ -13,7 +13,6 @@
 # limitations under the License.
 import datetime
 import errno
-import json
 import logging
 import os
 import re
@@ -21,21 +20,24 @@ import shutil
 import socket
 import sys
 import zipfile
-from distutils.spawn import find_executable
-
-from packaging import version
 
 import docker
-import emu
-from emu.emu_downloads_menu import AndroidReleaseZip, PlatformTools
 from jinja2 import Environment, PackageLoader
+from packaging import version
 from tqdm import tqdm
 
+import emu
+from emu.emu_downloads_menu import AndroidReleaseZip, PlatformTools
+from emu.template_writer import TemplateWriter
+from emu.utils import mkdir_p
 
-def mkdir_p(path):
-    """Make directories recursively if path not exists."""
-    if not os.path.exists(path):
-        os.makedirs(path)
+METRICS_MESSAGE = """
+By using this docker container you authorize Google to collect usage data for the Android Emulator
+— such as how you utilize its features and resources, and how you use it to test applications.
+This data helps improve the Android Emulator and is collected in accordance with
+[Google's Privacy Policy](http://www.google.com/policies/privacy/)
+"""
+NO_METRICS_MESSAGE = "No metrics are collected when running this container."
 
 
 class ProgressTracker(object):
@@ -78,6 +80,7 @@ class ProgressTracker(object):
             prog["current"] = current
             prog["tqdm"].update(diff)
 
+
 def extract_zip(fname, path):
     zip_file = zipfile.ZipFile(fname)
     print("Extracting: {} -> {}".format(fname, path))
@@ -102,15 +105,17 @@ class DockerDevice(object):
     )
     DEFAULT_BASE_IMG = "FROM docker-remote.registry.kroger.com/debian:stretch-slim AS emulator"
 
-    def __init__(self, emulator, sysimg, dest_dir, gpu=False, repo="", tag=""):
+    def __init__(self, emulator, sysimg, dest_dir, gpu=False, repo="", tag="", name=""):
 
         self.sysimg = AndroidReleaseZip(sysimg)
         self.emulator = AndroidReleaseZip(emulator)
         self.dest = dest_dir
-        self.env = Environment(loader=PackageLoader("emu", "templates"))
+        self.writer = TemplateWriter(dest_dir)
         if repo and repo[-1] != "/":
             repo += "/"
-        repo += self.sysimg.repo_friendly_name()
+        if not name:
+            name = self.sysimg.repo_friendly_name()
+        repo += name
         if gpu:
             repo += "-gpu"
         if not tag:
@@ -154,20 +159,6 @@ class DockerDevice(object):
                 return adb.read()
         return ""
 
-    def _write_template(self, tmpl_file, template_dict):
-        """Loads the the given template, writing it out to the dest_dir.
-
-            Note: the template will be written {dest_dir}/{tmpl_file},
-            directories will be created if the do not yet exist.
-        """
-        dest = os.path.join(self.dest, tmpl_file)
-        dest_dir = os.path.dirname(dest)
-        mkdir_p(dest_dir)
-        logging.info("Writing: %s with %s", dest, template_dict)
-        template = self.env.get_template(tmpl_file)
-        with open(dest, "w") as dfile:
-            dfile.write(template.render(template_dict))
-
     def get_api_client(self):
         try:
             api_client = docker.APIClient()
@@ -201,8 +192,11 @@ class DockerDevice(object):
         self.identity = identity
         return identity
 
+    def create_cloud_build_step(self):
+        return {"name": "gcr.io/cloud-builders/docker", "args": ["build", "-t", self.tag, os.path.basename(self.dest)]}
+
     def launch(self, image_sha, port=5555):
-        """Launches the container with the given sha, publishing abd on port, and grpc on port + 1.
+        """Launches the container with the given sha, publishing abd on port, and grpc on port 8554
 
            Returns the container.
         """
@@ -213,7 +207,7 @@ class DockerDevice(object):
                 privileged=True,
                 publish_all_ports=True,
                 detach=True,
-                ports={"5555/tcp": port, "5556/tcp": port + 1},
+                ports={"5555/tcp": port, "8554/tcp": 8554},
                 environment={"ADBKEY": self._read_adb_key()},
             )
             self.container = container
@@ -226,7 +220,20 @@ class DockerDevice(object):
             print("Unable to start the container, try running it as:")
             print("./run.sh {}", image_sha)
 
-    def create_docker_file(self, extra="", metrics=False):
+    def bin_place_emulator_files(self, by_copying_zip_files):
+        """Bin places the emulator files for the docker file."""
+        if by_copying_zip_files:
+            logging.info("Copying zips to docker src dir: %s", self.dest)
+            shutil.copy2(self.emulator.fname, self.dest)
+            shutil.copy2(self.sysimg.fname, self.dest)
+            logging.info("Done copying")
+        else:
+            logging.info("Unzipping zips to docker src dir: %s", self.dest)
+            extract_zip(self.emulator.fname, os.path.join(self.dest, "emu"))
+            extract_zip(self.sysimg.fname, os.path.join(self.dest, "sys"))
+            logging.info("Done unzipping")
+
+    def create_docker_file(self, extra="", metrics=False, by_copying_zip_files=False):
         logging.info("Emulator zip: %s", self.emulator)
         logging.info("Sysimg zip: %s", self.sysimg)
         logging.info("Docker src dir: %s", self.dest)
@@ -238,15 +245,10 @@ class DockerDevice(object):
             shutil.rmtree(self.dest)
         mkdir_p(self.dest)
 
-        logging.info("Unzipping zips to docker src dir: %s", self.dest)
-        extract_zip(self.emulator.fname, os.path.join(self.dest, 'emu'))
-        extract_zip(self.sysimg.fname, os.path.join(self.dest, 'sys'))
-        logging.info("Done unzipping")
-
+        self.bin_place_emulator_files(by_copying_zip_files)
         self._copy_adb_to(self.dest)
-
-        self._write_template("avd/Pixel2.ini", {"api": self.sysimg.api()})
-        self._write_template(
+        self.writer.write_template("avd/Pixel2.ini", {"api": self.sysimg.api()})
+        self.writer.write_template(
             "avd/Pixel2.avd/config.ini",
             {
                 "playstore": self.sysimg.tag() == "google_apis_playstore",
@@ -256,15 +258,32 @@ class DockerDevice(object):
             },
         )
 
+        metrics_msg = NO_METRICS_MESSAGE
         # Only version 29.3.1 >= can collect metrics.
         if metrics and version.parse(self.emulator.revision()) >= version.parse("29.3.1"):
             extra += " -metrics-collection"
+            metrics_msg = METRICS_MESSAGE
+
+        # Include a README.MD message.
+        self.writer.write_template(
+            "emulator.README.MD",
+            {
+                "metrics": metrics_msg,
+                "dessert": self.sysimg.codename(),
+                "tag": self.sysimg.tag(),
+                "container_id": self.tag,
+                "emu_build_id": self.emulator.build_id(),
+            },
+            rename_as="README.MD",
+        )
 
         extra += " {}".format(self.sysimg.logger_flags())
-        self._write_template("launch-emulator.sh", {"extra": extra, "version": emu.__version__})
-        self._write_template("default.pa", {})
-        self._write_template(
-            "Dockerfile",
+        self.writer.write_template("launch-emulator.sh", {"extra": extra, "version": emu.__version__})
+        self.writer.write_template("default.pa", {})
+
+        src_template = "Dockerfile.from_zip" if by_copying_zip_files else "Dockerfile"
+        self.writer.write_template(
+            src_template,
             {
                 "user": "{}@{}".format(os.environ.get("USER", "unknown"), socket.gethostname()),
                 "tag": self.sysimg.tag(),
@@ -278,4 +297,5 @@ class DockerDevice(object):
                 "date": date,
                 "from_base_img": self.base_img,
             },
+            rename_as="Dockerfile",
         )

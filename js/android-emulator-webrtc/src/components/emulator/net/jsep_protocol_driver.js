@@ -14,12 +14,16 @@
  * limitations under the License.
  */
 import { EventEmitter } from "events";
-import "../../../android_emulation_control/emulator_controller_pb";
-
+import { Empty } from "google-protobuf/google/protobuf/empty_pb";
+import { ThemeProvider } from "@material-ui/core";
 /**
- * This drives the jsep protocol with the emulator. The jsep protocol is described here:
- * https://rtcweb-wg.github.io/jsep/. Note that we use a message pump to the grpc endpoint
- * to receive jsep messages that must remain active for the duration of the connection.
+ * This drives the jsep protocol with the emulator, and can be used to
+ * send key/mouse/touch events to the emulator. Events will be send
+ * over the data channel if open, otherwise they will be send via the
+ * grpc endpoint.
+ *
+ *  The jsep protocol is described here:
+ * https://rtcweb-wg.github.io/jsep/.
  *
  *  This class can fire two events:
  *
@@ -28,6 +32,7 @@ import "../../../android_emulation_control/emulator_controller_pb";
  *
  * You usually want to start the stream after instantiating this object. Do not forget to
  * disconnect once you are finished to terminate the message pump.
+ *
  *
  * @example
  *  jsep = new JsepProtocolDriver(emulator, s => { video.srcObject = s; video.play() });
@@ -39,22 +44,25 @@ import "../../../android_emulation_control/emulator_controller_pb";
 export default class JsepProtocol {
   /**
    * Creates an instance of JsepProtocol.
-   * @param {EmulatorControllerService} emulator Service used to make the gRPC calls
+   * @param {EmulatorService} emulator Service used to make the gRPC calls
+   * @param {RtcService} rtc Service used to open up the rtc calls.
+   * @param {boolean} poll True if we should use polling
    * @param {callback} onConnect optional callback that is invoked when a stream is available
    * @param {callback} onDisconnect optional callback that is invoked when the stream is closed.
    * @memberof JsepProtocol
    */
-  constructor(emulator, onConnect, onDisconnect) {
+  constructor(emulator, rtc, poll, onConnect, onDisconnect) {
     this.emulator = emulator;
+    this.rtc = rtc;
     this.events = new EventEmitter();
-    /* eslint-disable */
-    this.guid = new proto.android.emulation.control.RtcId();
-    this.event_forwarders = {}
-
+    this.poll = poll;
+    this.guid = null;
+    this.stream = null;
+    this.event_forwarders = {};
+    if (typeof this.rtc.receiveJsepMessages !== "function") this.poll = true;
     if (onConnect) this.events.on("connected", onConnect);
     if (onDisconnect) this.events.on("disconnected", onDisconnect);
   }
-
 
   on = (name, fn) => {
     this.events.on(name, fn);
@@ -68,6 +76,10 @@ export default class JsepProtocol {
   disconnect = () => {
     this.connected = false;
     if (this.peerConnection) this.peerConnection.close();
+    if (this.stream) {
+      this.stream.cancel();
+      this.stream = null;
+    }
     this.active = false;
     this.events.emit("disconnected", this);
   };
@@ -83,14 +95,26 @@ export default class JsepProtocol {
     this.peerConnection = null;
     this.active = true;
 
-    var request = new proto.google.protobuf.Empty();
-    this.emulator.requestRtcStream(request).on("data", response => {
+    var request = new Empty();
+    this.rtc.requestRtcStream(request, {}, (err, response) => {
+      if (err) {
+        console.error("Failed to configure rtc stream: " + JSON.stringify(err));
+        this.disconnect();
+        return;
+      }
+
       // Configure
-      self.guid.setGuid(response.getGuid());
+      self.guid = response;
       self.connected = true;
 
-      // And pump messages
-      self._receiveJsepMessage();
+      if (!this.poll) {
+        // Streaming envoy based.
+        self._streamJsepMessage();
+      } else {
+        // Poll pump messages, go/envoy based proxy.
+        console.info("Polling jsep messages.");
+        self._receiveJsepMessage();
+      }
     });
   };
 
@@ -107,13 +131,14 @@ export default class JsepProtocol {
       );
       this.peerConnection = null;
     }
+    this.event_forwarders = {};
   };
 
-  _handlePeerConnectionTrack = e => {
-    this.events.emit("connected", e.streams[0]);
+  _handlePeerConnectionTrack = (e) => {
+    this.events.emit("connected", e.track);
   };
 
-  _handlePeerConnectionStateChange = e => {
+  _handlePeerConnectionStateChange = (e) => {
     switch (this.peerConnection.connectionState) {
       case "disconnected":
       // At least one of the ICE transports for the connection is in the "disconnected" state
@@ -127,16 +152,16 @@ export default class JsepProtocol {
     }
   };
 
-  _handleDataChannelStatusChange = e => {
+  _handleDataChannelStatusChange = (e) => {
     console.log("Data status change " + e);
   };
 
   send(label, msg) {
     let bytes = msg.serializeBinary();
-    let forwarder = this.event_forwarders[label]
-
+    let forwarder = this.event_forwarders[label];
+    console.log("Send " + label + " " + JSON.stringify(msg.toObject()));
     // Send via data channel/gRPC bridge.
-    if (forwarder && forwarder.readyState == "open") {
+    if (this.connected && forwarder && forwarder.readyState == "open") {
       this.event_forwarders[label].send(bytes);
     } else {
       // Fallback to using the gRPC protocol
@@ -154,17 +179,17 @@ export default class JsepProtocol {
     }
   }
 
-  _handlePeerIceCandidate = e => {
+  _handlePeerIceCandidate = (e) => {
     if (e.candidate === null) return;
     this._sendJsep({ candidate: e.candidate });
   };
 
-  _handleDataChannel = e => {
-    let channel = e.channel
+  _handleDataChannel = (e) => {
+    let channel = e.channel;
     this.event_forwarders[channel.label] = channel;
-  }
+  };
 
-  _handleStart = signal => {
+  _handleStart = (signal) => {
     this.peerConnection = new RTCPeerConnection(signal.start);
     this.peerConnection.addEventListener(
       "track",
@@ -181,11 +206,12 @@ export default class JsepProtocol {
       this._handlePeerConnectionStateChange,
       false
     );
-    this.peerConnection.ondatachannel = e => { this._handleDataChannel(e); }
+    this.peerConnection.ondatachannel = (e) => {
+      this._handleDataChannel(e);
+    };
   };
 
-
-  _handleSDP = async signal => {
+  _handleSDP = async (signal) => {
     this.peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
     const answer = await this.peerConnection.createAnswer();
     if (answer) {
@@ -196,11 +222,11 @@ export default class JsepProtocol {
     }
   };
 
-  _handleCandidate = signal => {
+  _handleCandidate = (signal) => {
     this.peerConnection.addIceCandidate(new RTCIceCandidate(signal));
   };
 
-  _handleJsepMessage = message => {
+  _handleJsepMessage = (message) => {
     try {
       const signal = JSON.parse(message);
       if (signal.start) this._handleStart(signal);
@@ -208,7 +234,12 @@ export default class JsepProtocol {
       if (signal.bye) this._handleBye();
       if (signal.candidate) this._handleCandidate(signal);
     } catch (e) {
-      console.log("Failed to handle message: [" + message + "], due to: " + e);
+      console.error(
+        "Failed to handle message: [" +
+          message +
+          "], due to: " +
+          JSON.stringify(e)
+      );
     }
   };
 
@@ -218,14 +249,32 @@ export default class JsepProtocol {
     }
   };
 
-  _sendJsep = jsonObject => {
+  _sendJsep = (jsonObject) => {
     /* eslint-disable */
     var request = new proto.android.emulation.control.JsepMsg();
     request.setId(this.guid);
     request.setMessage(JSON.stringify(jsonObject));
-    this.emulator.sendJsepMessage(request);
+    this.rtc.sendJsepMessage(request);
   };
 
+  _streamJsepMessage = () => {
+    if (!this.connected) return;
+    var self = this;
+
+    this.stream = this.rtc.receiveJsepMessages(this.guid, {});
+    this.stream.on("data", (response) => {
+      const msg = response.getMessage();
+      self._handleJsepMessage(msg);
+    });
+    this.stream.on("error", (e) => {
+      self.disconnect();
+    });
+    this.stream.on("end", (e) => {
+      self.disconnect();
+    });
+  };
+
+  // This function is a fallback for v1 (go based proxy), that does not support streaming.
   _receiveJsepMessage = () => {
     if (!this.connected) return;
 
@@ -233,7 +282,14 @@ export default class JsepProtocol {
 
     // This is a blocking call, that will return as soon as a series
     // of messages have been made available, or if we reach a timeout
-    this.emulator.receiveJsepMessage(this.guid, {}).on("data", response => {
+    this.rtc.receiveJsepMessage(this.guid, {}, (err, response) => {
+      if (err) {
+        console.error(
+          "Failed to receive jsep message, disconnecting: " +
+            JSON.stringify(err)
+        );
+        this.disconnect();
+      }
       const msg = response.getMessage();
       // Handle only if we received a useful message.
       // it is possible to get nothing if the server decides

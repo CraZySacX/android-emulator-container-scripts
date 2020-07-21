@@ -54,6 +54,7 @@ API_LETTER_MAPPING = {
     "27": "O",
     "28": "P",
     "29": "Q",
+    "30": "R",
 }
 
 # Older versions might not work as expected.
@@ -114,6 +115,8 @@ class AndroidReleaseZip(object):
 
     def codename(self):
         """First letter of the desert, if any."""
+        if 'AndroidVersion.CodeName' in self.props:
+            return self.props['AndroidVersion.CodeName']
         api = self.api()
         if api in API_LETTER_MAPPING:
             return API_LETTER_MAPPING[api]
@@ -125,6 +128,8 @@ class AndroidReleaseZip(object):
         return self.props.get("SystemImage.Abi", "")
 
     def short_abi(self):
+        if self.abi() not in self.SHORT_MAP:
+            logging.error("%s not in short map", self)
         return self.SHORT_MAP[self.abi()]
 
     def cpu(self):
@@ -138,7 +143,7 @@ class AndroidReleaseZip(object):
     def tag(self):
         """The tag associated with this release."""
         tag = self.props.get("SystemImage.TagId", "")
-        if tag == "default":
+        if tag == "default" or tag.strip() == "":
             tag = "android"
         return tag
 
@@ -217,8 +222,8 @@ class License(object):
         self.cfg.accept_license(self.name)
 
     def __str__(self):
-      # encode to utf-8 for python 2
-      return str(self.text.encode('utf-8'))
+        # encode to utf-8 for python 2
+        return str(self.text.encode("utf-8"))
 
     def __hash__(self):
         return hash(self.name)
@@ -252,7 +257,7 @@ class SysImgInfo(LicensedObject):
             if self.api in API_LETTER_MAPPING:
                 self.letter = API_LETTER_MAPPING[self.api]
             else:
-                self.letter = "_"
+                self.letter = "A" # A indicates unknown code.
         else:
             self.letter = codename.text
 
@@ -408,7 +413,7 @@ def list_all_downloads(arm):
     emu_infos = get_emus_info()
 
     for img_info in img_infos:
-        print("SYSIMG {} {} {} {} {}".format(img_info.api, img_info.letter, img_info.tag, img_info.abi, img_info.url))
+        print("SYSIMG {} {} {} {} {}".format(img_info.letter, img_info.tag, img_info.abi, img_info.api, img_info.url))
 
     for emu_info in emu_infos:
         for (hostos, url) in list(emu_info.urls.items()):

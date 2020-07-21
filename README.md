@@ -68,22 +68,22 @@ a docker file will be created. The system image and emulator will be downloaded
 to the current directory if needed. The script will provide you with a command
 to see the logs as well as the command to stop the container.
 
-You can now connect to the running device using adb:
+If the local adb server detected the started container automatically,
+you have nothing to do to query it through adb. If that's not the case,
+you can now connect to the running device using adb:
 
     adb connect localhost:5555
 
+To check if adb has seen the container, you can use the:
+
+    adb devices
+
+command and check if a device is detected.
+    
 Do not forget to stop the docker container once you are done!
 
-If you wish to interact with the emulator via the web, and you have port 80 and
-443 available you can run:
-
-    docker-compose -f js/docker/docker-compose.yaml build
-
-After building the containers, you can launch the emulator as follows
-
-    docker-compose -f js/docker/docker-compose.yaml up
-
-The emulator should be available at [http://localhost](http://localhost).
+Read the [section](#Make-the-emulator-accessible-on-the-web) on making the emulator available on the web to run the emulator
+using webrtc
 
 ## Obtaining URLs for emulator/system image zip files
 
@@ -163,13 +163,13 @@ We provide the following run script:
 It does the following:
 
     docker run -e "ADBKEY=$(cat ~/.android/adbkey)" --device /dev/kvm --publish
-    5556:5556/tcp --publish 5555:5555/tcp <docker-image-id>
+    8554:8554/tcp --publish 5555:5555/tcp <docker-image-id>
 
 
 - Sets up the ADB key, assuming one exists at ~/.android/adbkey
 - Uses `--device /dev/kvm` to have CPU acceleration
 - Starts the emulator in the docker image with its gRPC service, forwarding the
-  host ports 5556/5555 to container ports 5556/5555 respectively.
+  host ports 8554/5555 to container ports 8554/5555 respectively.
 - The gRPC service is used to communicate with the running emulator inside the
   container.
 
@@ -238,7 +238,7 @@ For example:
 
 
 ```sh
-    docker run --device /dev/kvm --publish 5556:5556/tcp --publish 5555:5555/tcp \
+    docker run --device /dev/kvm --publish 8554:8554/tcp --publish 5555:5555/tcp \
     us.gcr.io/emulator-project/q-playstore-x86:29.3.2
 ```
 
@@ -306,6 +306,27 @@ keep the following in mind:
   documentation above.
 
 ## Running the emulator on the web
+
+
+In order to create the web containers you must have the following tools available:
+
+- A protobuf compiler and headers
+- GNUmake
+- NodeJS
+- Package config
+- Npm
+
+On debian based systems you can install these as follows:
+
+    sudo apt-get install build-essential nodejs npm libprotoc-dev protobuf-compiler pkg-config
+
+
+Next you must create a container with the emulator & system image version you wish to
+use. For example:
+
+    . ./configure.sh && emu-docker create canary "P.*x64"
+
+### Running the create script
 
 Once you have taken care of the steps above you can create the containers using
 the `create_web_container.sh` script:
