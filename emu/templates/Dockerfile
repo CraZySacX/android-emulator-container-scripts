@@ -71,7 +71,7 @@ HEALTHCHECK --interval=30s \
             --timeout=30s \
             --start-period=30s \
             --retries=3 \
-            CMD /android/sdk/platform-tools/adb shell getprop dev.bootcomplete | grep "1"
+            CMD /android/sdk/platform-tools/adb shell getprop sys.boot_completed | grep "1"
 
 # Date frequently changes, so we place this in the last layer.
 LABEL maintainer="{{user}}" \

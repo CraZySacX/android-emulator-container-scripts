@@ -321,7 +321,6 @@ def get_images_info(arm=False):
     xml = []
     for url in SYSIMG_REPOS:
         response = requests.get(url)
-        print(response)
         if response.status_code == 200:
             xml.append(response.content)
 
